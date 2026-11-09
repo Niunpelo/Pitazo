@@ -1,0 +1,75 @@
+name: Compilar APK
+
+# Se ejecuta a mano: Actions > Compilar APK > Run workflow.
+# El APK queda publicado en la pestaña "Releases" del repositorio.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descomprimir el proyecto si se subió como zip
+        run: |
+          if [ -f pitazo.zip ]; then
+            unzip -q -o pitazo.zip -x '.github/*'
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Comprobar la dirección del backend
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          if [ -z "$API_BASE_URL" ]; then
+            echo "::error::Falta la variable API_BASE_URL (Settings > Secrets and variables > Actions > Variables)."
+            exit 1
+          fi
+
+      - name: Generar la parte Android del proyecto
+        run: flutter create --platforms=android --org com.pitazo --project-name pitazo .
+
+      - name: Permitir acceso a Internet en la versión final
+        run: |
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          if ! grep -q 'android.permission.INTERNET' "$MANIFEST"; then
+            sed -i '0,/<application/s//<uses-permission android:name="android.permission.INTERNET"\/>\n    <application/' "$MANIFEST"
+          fi
+          grep -n 'permission.INTERNET' "$MANIFEST"
+
+      - name: Usar siempre la misma clave de firma
+        run: |
+          mkdir -p ~/.android
+          cp keystore/debug.keystore ~/.android/debug.keystore
+
+      - run: flutter pub get
+
+      - run: flutter test
+
+      - name: Compilar APK
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: flutter build apk --release --dart-define=API_BASE_URL="$API_BASE_URL"
+
+      - name: Publicar en Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Pitazo (compilación ${{ github.run_number }})
+          files: build/app/outputs/flutter-apk/app-release.apk
+          make_latest: true
