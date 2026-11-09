@@ -1,0 +1,46 @@
+name: Publicar backend
+
+# Se ejecuta a mano: Actions > Publicar backend > Run workflow.
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descomprimir el proyecto si se subió como zip
+        run: |
+          if [ -f pitazo.zip ]; then
+            unzip -q -o pitazo.zip -x '.github/*'
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pruebas del backend
+        run: node test/smoke.mjs
+        working-directory: worker
+
+      - name: Desplegar en Cloudflare
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+          secrets: |
+            FOOTBALL_DATA_KEY
+        env:
+          FOOTBALL_DATA_KEY: ${{ secrets.FOOTBALL_DATA_KEY }}
+
+      - name: Mostrar la dirección del backend
+        env:
+          DEPLOY_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          echo "### Backend publicado" >> "$GITHUB_STEP_SUMMARY"
+          echo "Copia esta dirección en la variable API_BASE_URL: $DEPLOY_URL" >> "$GITHUB_STEP_SUMMARY"
